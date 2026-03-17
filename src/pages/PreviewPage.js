@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { 
@@ -23,7 +23,6 @@ const PreviewPage = () => {
   const { 
     invoices, 
     updateInvoice, 
-    updateLineItem, 
     removeInvoice,
     previewData,
     setPreview
@@ -35,13 +34,7 @@ const PreviewPage = () => {
   const [previewMode, setPreviewMode] = useState(false);
   const [localPreview, setLocalPreview] = useState(null);
 
-  useEffect(() => {
-    if (invoices.length > 0 && !previewData) {
-      loadPreview();
-    }
-  }, [invoices]);
-
-  const loadPreview = async () => {
+  const loadPreview = useCallback(async () => {
     try {
       const result = await previewExcel(invoices);
       setPreview(result.data);
@@ -50,7 +43,13 @@ const PreviewPage = () => {
       console.error('Preview error:', error);
       toast.error('Failed to load preview');
     }
-  };
+  }, [invoices, setPreview]);
+
+  useEffect(() => {
+    if (invoices.length > 0 && !previewData) {
+      loadPreview();
+    }
+  }, [invoices, previewData, loadPreview]);
 
   const handleGenerateExcel = async () => {
     setGenerating(true);

@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { 
   Upload, 
-  File, 
   X, 
   CheckCircle, 
   AlertCircle, 
@@ -19,7 +18,6 @@ const UploadPage = () => {
   const navigate = useNavigate();
   const { addInvoices, setProcessing, processing, clearInvoices } = useInvoices();
   const [files, setFiles] = useState([]);
-  const [uploadProgress, setUploadProgress] = useState({});
 
   const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
     // Handle rejected files

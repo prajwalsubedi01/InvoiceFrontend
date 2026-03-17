@@ -6,8 +6,7 @@ import {
   Settings, 
   HelpCircle, 
   BarChart3,
-  Menu,
-  X
+  Menu
 } from 'lucide-react';
 import UploadPage from './pages/UploadPage';
 import PreviewPage from './pages/PreviewPage';

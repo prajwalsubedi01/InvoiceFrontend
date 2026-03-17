@@ -15,8 +15,7 @@ import {
   updateMappingRules,
   addSupplierMapping,
   addAccountMapping,
-  getAccountCodes,
-  getSupplierCodes
+  getAccountCodes
 } from '../services/api';
 
 const MappingPage = () => {
