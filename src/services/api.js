@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 function normalizeApiBaseUrl(rawUrl) {
-  const fallback = 'https://invoicebackend-myk5.onrender.com/api';
+  const fallback = 'https://invoicebackend-vpbc.onrender.com/api';
   const input = (rawUrl || '').trim();
   if (!input) return fallback;
 
@@ -10,11 +10,11 @@ function normalizeApiBaseUrl(rawUrl) {
   return `${cleaned}/api`;
 }
 
-const API_BASE_URL = normalizeApiBaseUrl(process.env.REACT_APP_API_URL||'https://invoicebackend-myk5.onrender.com/api');
+const API_BASE_URL = normalizeApiBaseUrl(process.env.REACT_APP_API_URL||'https://invoicebackend-vpbc.onrender.com/api'||'http://localhost:3001/api');
 const API_CANDIDATES = Array.from(new Set([
   API_BASE_URL,
-  'https://invoicebackend-myk5.onrender.com/api',
-  'http://127.0.0.1:3001/api'
+  'https://invoicebackend-vpbc.onrender.com/api'
+
 ]));
 let currentApiBaseUrl = API_CANDIDATES[0];
 
