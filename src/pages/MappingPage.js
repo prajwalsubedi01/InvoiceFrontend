@@ -80,6 +80,11 @@ const MappingPage = () => {
       toast.error('Please enter both supplier name and code');
       return;
     }
+
+    if (supplierMappings[newSupplierName]) {
+      toast.error('Supplier already exists in mappings');
+      return;
+    }
     
     try {
       await addSupplierMapping(newSupplierName, newSupplierCode);
@@ -106,6 +111,11 @@ const MappingPage = () => {
   const addAccount = async () => {
     if (!newKeyword || !newAccountCode) {
       toast.error('Please enter both keyword and account code');
+      return;
+    }
+
+    if (accountMappings[newKeyword]) {
+      toast.error('Keyword already exists in mappings');
       return;
     }
     
@@ -436,6 +446,7 @@ const MappingPage = () => {
           </div>
         </div>
       )}
+
 
       {/* Default Values Section */}
       <div className="card p-4">

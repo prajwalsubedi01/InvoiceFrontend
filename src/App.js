@@ -3,15 +3,20 @@ import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-do
 import { 
   Upload, 
   FileText, 
-  Settings, 
   HelpCircle, 
   BarChart3,
+  Database,
+  ListChecks,
+  Download,
   Menu
 } from 'lucide-react';
 import UploadPage from './pages/UploadPage';
 import PreviewPage from './pages/PreviewPage';
-import MappingPage from './pages/MappingPage';
 import DashboardPage from './pages/DashboardPage';
+import MasterUploadPage from './pages/MasterUploadPage';
+import InvoiceListPage from './pages/InvoiceListPage';
+import InvoiceDetailPage from './pages/InvoiceDetailPage';
+import ExportPage from './pages/ExportPage';
 import { InvoiceProvider } from './context/InvoiceContext';
 
 function App() {
@@ -20,7 +25,9 @@ function App() {
   const navItems = [
     { path: '/', label: 'Upload', icon: Upload },
     { path: '/preview', label: 'Preview & Edit', icon: FileText },
-    { path: '/mappings', label: 'Mapping Rules', icon: Settings },
+    { path: '/masters', label: 'Master Uploads', icon: Database },
+    { path: '/invoices', label: 'Invoices', icon: ListChecks },
+    { path: '/exports', label: 'Exports', icon: Download },
     { path: '/dashboard', label: 'Dashboard', icon: BarChart3 },
   ];
 
@@ -113,7 +120,10 @@ function App() {
               <Routes>
                 <Route path="/" element={<UploadPage />} />
                 <Route path="/preview" element={<PreviewPage />} />
-                <Route path="/mappings" element={<MappingPage />} />
+                <Route path="/masters" element={<MasterUploadPage />} />
+                <Route path="/invoices" element={<InvoiceListPage />} />
+                <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
+                <Route path="/exports" element={<ExportPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
               </Routes>
             </div>

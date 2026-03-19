@@ -6,6 +6,7 @@ import {
   Download, 
   Edit2, 
   Trash2, 
+  Plus,
   ChevronDown, 
   ChevronUp,
   Loader2,
@@ -16,7 +17,15 @@ import {
   Eye
 } from 'lucide-react';
 import { useInvoices } from '../context/InvoiceContext';
-import { generateExcel, previewExcel } from '../services/api';
+import {
+  addLearningCorrection,
+  generateExcel,
+  previewExcel,
+  listInvoices,
+  getInvoiceDetails,
+  getSupplierCodes,
+  getAccountCodes
+} from '../services/api';
 
 const PreviewPage = () => {
   const navigate = useNavigate();
@@ -33,23 +42,111 @@ const PreviewPage = () => {
   const [generating, setGenerating] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [localPreview, setLocalPreview] = useState(null);
+  const [dbInvoices, setDbInvoices] = useState([]);
+  const [loadingDb, setLoadingDb] = useState(false);
+  const [supplierCodeOptions, setSupplierCodeOptions] = useState([]);
+  const [accountCodeOptions, setAccountCodeOptions] = useState([]);
 
-  const loadPreview = useCallback(async () => {
+  const loadPreview = useCallback(async (sourceInvoices) => {
     try {
-      const result = await previewExcel(invoices);
+      const result = await previewExcel(sourceInvoices);
       setPreview(result.data);
       setLocalPreview(result.data);
     } catch (error) {
       console.error('Preview error:', error);
       toast.error('Failed to load preview');
     }
-  }, [invoices, setPreview]);
+  }, [setPreview]);
 
   useEffect(() => {
     if (invoices.length > 0 && !previewData) {
-      loadPreview();
+      loadPreview(invoices);
     }
   }, [invoices, previewData, loadPreview]);
+
+  useEffect(() => {
+    const loadCodeOptions = async () => {
+      try {
+        const [supplierRes, accountRes] = await Promise.all([
+          getSupplierCodes(),
+          getAccountCodes()
+        ]);
+        setSupplierCodeOptions(supplierRes?.data || []);
+        setAccountCodeOptions(accountRes?.data || []);
+      } catch (error) {
+        console.warn('Failed loading code options for edit modal:', error);
+      }
+    };
+
+    loadCodeOptions();
+  }, []);
+
+  useEffect(() => {
+    const loadDbInvoices = async () => {
+      if (invoices.length > 0) return;
+      setLoadingDb(true);
+      try {
+        const res = await listInvoices();
+        const list = (res.data || []).slice(0, 20);
+        const details = await Promise.all(
+          list.map(item => getInvoiceDetails(item._id))
+        );
+        const mapped = details.map((d) => {
+          const inv = d.data.invoice;
+          const items = d.data.lineItems || [];
+          const hasShippingLine = items.some(li =>
+            /shipping|freight|delivery|postage|courier|transport|logistics|handling/i.test(String(li.description || ''))
+          );
+          const shippingFallback = (!hasShippingLine && Number(inv.shippingAmount || 0) > 0)
+            ? [{
+                description: inv.shippingDescription || 'Shipping & Handling',
+                quantity: 1,
+                uom: 'UNIT',
+                unitPrice: Number(inv.shippingAmount || 0),
+                amount: Number(inv.shippingAmount || 0),
+                accountCode: '912-0000',
+                taxAmount: 0
+              }]
+            : [];
+          return {
+            id: inv._id,
+            source: 'db',
+            extractedData: {
+              invoiceNumber: inv.invoiceNumber,
+              invoiceDate: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '',
+              supplierName: inv.supplierNameRaw,
+              supplierCode: inv.supplierCode,
+              totalAmount: inv.totalAmount || 0,
+              taxAmount: inv.taxAmount || 0,
+              taxRate: 0,
+              shippingAmount: Number(inv.shippingAmount || 0),
+              shippingDescription: inv.shippingDescription || '',
+              lineItems: [...items.map(li => ({
+                description: li.description,
+                quantity: li.quantity,
+                uom: li.uom,
+                unitPrice: li.unitPrice,
+                amount: li.amount,
+                accountCode: li.accountCode,
+                taxAmount: li.taxAmount
+              })), ...shippingFallback],
+              confidence: inv.confidenceScore || 0
+            }
+          };
+        });
+        setDbInvoices(mapped);
+        if (!previewData) {
+          await loadPreview(mapped);
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error('Failed to load invoices from database');
+      } finally {
+        setLoadingDb(false);
+      }
+    };
+    loadDbInvoices();
+  }, [invoices, loadPreview, previewData]);
 
   const handleGenerateExcel = async () => {
     setGenerating(true);
@@ -74,17 +171,42 @@ const PreviewPage = () => {
   const startEditing = (invoice) => {
     setEditingInvoice({
       ...invoice,
-      extractedData: { ...invoice.extractedData }
+      extractedData: {
+        ...invoice.extractedData,
+        lineItems: [...(invoice.extractedData?.lineItems || [])]
+      },
+      __originalExtractedData: JSON.parse(JSON.stringify(invoice.extractedData || {}))
     });
   };
 
-  const saveEditing = () => {
+  const saveEditing = async () => {
     if (editingInvoice) {
-      updateInvoice(editingInvoice.id, editingInvoice);
+      const corrected = { ...(editingInvoice.extractedData || {}) };
+      const original = editingInvoice.__originalExtractedData || {};
+
+      updateInvoice(editingInvoice.id, {
+        ...editingInvoice,
+        __originalExtractedData: undefined,
+        extractedData: corrected
+      });
       setEditingInvoice(null);
       toast.success('Invoice updated');
-      // Reload preview
-      loadPreview();
+
+      try {
+        await addLearningCorrection({
+          supplierName: corrected.supplierName || '',
+          invoiceType: corrected.invoiceType || 'purchase',
+          extracted: original,
+          corrected
+        });
+      } catch (learningError) {
+        console.warn('Learning correction sync failed:', learningError);
+      }
+
+      const updatedInvoices = invoices.map((inv) =>
+        inv.id === editingInvoice.id ? { ...inv, extractedData: corrected } : inv
+      );
+      await loadPreview(updatedInvoices);
     }
   };
 
@@ -116,9 +238,11 @@ const PreviewPage = () => {
       
       // Recalculate amount if qty or unitPrice changed
       if (field === 'quantity' || field === 'unitPrice') {
-        const qty = field === 'quantity' ? parseFloat(value) : items[itemIndex].quantity;
-        const price = field === 'unitPrice' ? parseFloat(value) : items[itemIndex].unitPrice;
-        items[itemIndex].amount = qty * price;
+        const qty = field === 'quantity' ? parseFloat(value) : parseFloat(items[itemIndex].quantity || 0);
+        const price = field === 'unitPrice' ? parseFloat(value) : parseFloat(items[itemIndex].unitPrice || 0);
+        const safeQty = Number.isFinite(qty) ? qty : 0;
+        const safePrice = Number.isFinite(price) ? price : 0;
+        items[itemIndex].amount = safeQty * safePrice;
       }
       
       return {
@@ -131,9 +255,54 @@ const PreviewPage = () => {
     });
   };
 
+  const addLineItemRow = () => {
+    setEditingInvoice(prev => ({
+      ...prev,
+      extractedData: {
+        ...prev.extractedData,
+        lineItems: [
+          ...(prev.extractedData?.lineItems || []),
+          {
+            description: '',
+            quantity: 1,
+            uom: 'UNIT',
+            unitPrice: 0,
+            amount: 0,
+            accountCode: '',
+            taxAmount: 0
+          }
+        ]
+      }
+    }));
+  };
+
+  const removeLineItemRow = (itemIndex) => {
+    setEditingInvoice(prev => {
+      const nextItems = [...(prev.extractedData?.lineItems || [])];
+      nextItems.splice(itemIndex, 1);
+      return {
+        ...prev,
+        extractedData: {
+          ...prev.extractedData,
+          lineItems: nextItems
+        }
+      };
+    });
+  };
+
   const displayData = previewMode ? (localPreview || previewData) : null;
 
-  if (invoices.length === 0) {
+  const effectiveInvoices = invoices.length > 0 ? invoices : dbInvoices;
+
+  if (loadingDb) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (effectiveInvoices.length === 0) {
     return (
       <div className="text-center py-16">
         <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -270,10 +439,10 @@ const PreviewPage = () => {
       {/* Invoice List */}
       <div className="space-y-4">
         <h3 className="font-semibold text-gray-900">
-          Extracted Invoices ({invoices.length})
+          Extracted Invoices ({effectiveInvoices.length})
         </h3>
         
-        {invoices.map((invoice) => (
+        {effectiveInvoices.map((invoice) => (
           <div key={invoice.id} className="card">
             {/* Invoice Header */}
             <div 
@@ -311,7 +480,11 @@ const PreviewPage = () => {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      startEditing(invoice);
+                      if (invoice.source === 'db') {
+                        navigate(`/invoices/${invoice.id}`);
+                      } else {
+                        startEditing(invoice);
+                      }
                     }}
                     className="p-2 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
                   >
@@ -446,11 +619,20 @@ const PreviewPage = () => {
               <div>
                 <label className="label">Supplier Code</label>
                 <input
+                  list="supplier-code-options"
                   type="text"
                   className="input"
                   value={editingInvoice.extractedData?.supplierCode || ''}
                   onChange={(e) => updateEditField('supplierCode', e.target.value)}
+                  placeholder="Select or type supplier code"
                 />
+                <datalist id="supplier-code-options">
+                  {supplierCodeOptions.map((opt) => (
+                    <option key={opt.code} value={opt.code}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </datalist>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -477,9 +659,24 @@ const PreviewPage = () => {
               </div>
 
               {/* Line Items Editor */}
-              {editingInvoice.extractedData?.lineItems?.length > 0 && (
-                <div>
-                  <label className="label">Line Items</label>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="label mb-0">Line Items</label>
+                  <button
+                    type="button"
+                    onClick={addLineItemRow}
+                    className="btn-secondary inline-flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Row
+                  </button>
+                </div>
+
+                {(editingInvoice.extractedData?.lineItems || []).length === 0 ? (
+                  <div className="text-sm text-gray-500 p-3 bg-gray-50 rounded-lg">
+                    No line items detected. Click "Add Row" to add missing items.
+                  </div>
+                ) : (
                   <div className="space-y-2">
                     {editingInvoice.extractedData.lineItems.map((item, idx) => (
                       <div key={idx} className="grid grid-cols-12 gap-2 p-3 bg-gray-50 rounded-lg">
@@ -497,22 +694,23 @@ const PreviewPage = () => {
                             type="number"
                             className="input text-sm"
                             placeholder="Qty"
-                            value={item.quantity || 1}
-                            onChange={(e) => updateLineItemField(idx, 'quantity', parseFloat(e.target.value))}
+                            value={item.quantity ?? 1}
+                            onChange={(e) => updateLineItemField(idx, 'quantity', parseFloat(e.target.value || 0))}
                           />
                         </div>
-                        <div className="col-span-3">
+                        <div className="col-span-2">
                           <input
                             type="number"
                             step="0.01"
                             className="input text-sm"
                             placeholder="Unit Price"
-                            value={item.unitPrice || 0}
-                            onChange={(e) => updateLineItemField(idx, 'unitPrice', parseFloat(e.target.value))}
+                            value={item.unitPrice ?? 0}
+                            onChange={(e) => updateLineItemField(idx, 'unitPrice', parseFloat(e.target.value || 0))}
                           />
                         </div>
                         <div className="col-span-3">
                           <input
+                            list="account-code-options"
                             type="text"
                             className="input text-sm"
                             placeholder="Account Code"
@@ -520,11 +718,28 @@ const PreviewPage = () => {
                             onChange={(e) => updateLineItemField(idx, 'accountCode', e.target.value)}
                           />
                         </div>
+                        <div className="col-span-1 flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => removeLineItemRow(idx)}
+                            className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                            title="Remove row"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     ))}
+                    <datalist id="account-code-options">
+                      {accountCodeOptions.map((opt) => (
+                        <option key={opt.code} value={opt.code}>
+                          {opt.description}
+                        </option>
+                      ))}
+                    </datalist>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">

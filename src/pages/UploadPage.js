@@ -12,9 +12,15 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { useInvoices } from '../context/InvoiceContext';
-import { processInvoice, processInvoicesBatch } from '../services/api';
+import { checkBackendHealth, processInvoice, processInvoicesHybrid } from '../services/api';
 
 const UploadPage = () => {
+  const BATCH_OPTIONS = {
+    parallel: 5,
+    useCache: true,
+    supplierTemplates: true
+  };
+
   const navigate = useNavigate();
   const { addInvoices, setProcessing, processing, clearInvoices } = useInvoices();
   const [files, setFiles] = useState([]);
@@ -66,6 +72,20 @@ const UploadPage = () => {
       return;
     }
 
+    try {
+      const health = await checkBackendHealth();
+      if (!health?.status) {
+        toast.error('Backend health check failed. Please try again.');
+        return;
+      }
+      if (health?.database?.connected === false) {
+        toast('Backend is in degraded mode: invoices can be processed but may not be saved.');
+      }
+    } catch (healthError) {
+      toast.error(healthError.message || 'Cannot reach backend server.');
+      return;
+    }
+
     setProcessing(true);
     const pendingFiles = files.filter(f => f.status === 'pending');
     
@@ -74,25 +94,38 @@ const UploadPage = () => {
         // Single file processing
         const fileItem = pendingFiles[0];
         updateFileStatus(fileItem.id, 'processing');
-        
-        const result = await processInvoice(fileItem.file);
+        updateFileProgress(fileItem.id, 5);
+
+        const result = await processInvoice(fileItem.file, (event) => {
+          if (!event.total) return;
+          const percent = Math.min(60, Math.round((event.loaded / event.total) * 60));
+          updateFileProgress(fileItem.id, percent);
+        });
         
         if (result.success) {
           updateFileStatus(fileItem.id, 'completed');
-          addInvoices([result.data]);
-          toast.success('Invoice processed successfully!');
+          updateFileProgress(fileItem.id, 100);
+          const invoices = result.data?.invoices || [result.data];
+          addInvoices(invoices);
+          toast.success(`Processed ${invoices.length} invoice(s) successfully!`);
         }
       } else {
         // Batch processing
         pendingFiles.forEach(f => updateFileStatus(f.id, 'processing'));
-        
+        pendingFiles.forEach(f => updateFileProgress(f.id, 5));
+
         const fileList = pendingFiles.map(f => f.file);
-        const result = await processInvoicesBatch(fileList);
+        const result = await processInvoicesHybrid(fileList, BATCH_OPTIONS, (event) => {
+          if (!event.total) return;
+          const percent = Math.min(60, Math.round((event.loaded / event.total) * 60));
+          pendingFiles.forEach(f => updateFileProgress(f.id, percent));
+        });
         
         if (result.success) {
           // Update file statuses
           result.data.invoices.forEach((inv, idx) => {
             updateFileStatus(pendingFiles[idx]?.id, 'completed');
+            updateFileProgress(pendingFiles[idx]?.id, 100);
           });
           
           // Add processed invoices
@@ -112,10 +145,10 @@ const UploadPage = () => {
       
     } catch (error) {
       console.error('Processing error:', error);
-      toast.error(error.response?.data?.message || 'Failed to process invoices');
+      toast.error(error.message || error.response?.data?.message || 'Failed to process invoices');
       
       pendingFiles.forEach(f => {
-        updateFileStatus(f.id, 'error', error.message);
+        updateFileStatus(f.id, 'error', error.message || 'Upload failed');
       });
     } finally {
       setProcessing(false);
@@ -126,6 +159,14 @@ const UploadPage = () => {
     setFiles(prev => 
       prev.map(f => 
         f.id === id ? { ...f, status, error } : f
+      )
+    );
+  };
+
+  const updateFileProgress = (id, progress) => {
+    setFiles(prev =>
+      prev.map(f =>
+        f.id === id ? { ...f, progress } : f
       )
     );
   };
@@ -230,6 +271,17 @@ const UploadPage = () => {
                   <p className="text-sm text-gray-500">
                     {(fileItem.file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
+                  {fileItem.status === 'processing' && (
+                    <div className="mt-2">
+                      <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-2 bg-blue-600 transition-all"
+                          style={{ width: `${fileItem.progress || 0}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{fileItem.progress || 0}%</p>
+                    </div>
+                  )}
                   {fileItem.error && (
                     <p className="text-sm text-red-600 mt-1">
                       {fileItem.error}
